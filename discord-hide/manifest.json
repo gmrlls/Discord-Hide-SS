@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Discord Clean SpiderSensei",
+  "version": "1.0.0",
+  "description": "Oculte servidores e canais do Discord. Versão local, sem atualizações automáticas.",
+  "action": {
+    "default_icon": "icons/icon128-inactive.png",
+    "default_popup": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "css": [ "hide-discord-sidebar.css" ],
+      "js": [ "hide-discord-sidebar.js" ],
+      "matches": [ "*://*.discord.com/*" ],
+      "run_at": "document_start"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "host_permissions": [
+    "*://*.discord.com/*"
+  ],
+  "icons": {
+    "128": "icons/icon128-active.png"
+  },
+  "permissions": [
+    "scripting",
+    "storage"
+  ],
+  "short_name": "Clean Discord"
+}
