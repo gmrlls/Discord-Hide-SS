@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#16122b">
+<title>Controle · Corrida a Dois</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+[hidden]{display:none!important}
+:root{--bg:#16122b;--ink:#f6f1ff;--muted:#a59cc4;--panel:#231c40;--me:#ffd166;--gold:#ffd166;--gold-ink:#2a1d00;
+  --display:"Bungee","Arial Black",Impact,sans-serif;--body:"Rubik",system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);overflow:hidden;position:fixed;inset:0;
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent}
+
+/* tela de entrada */
+#join{position:fixed;inset:0;display:grid;place-items:center;padding:calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 16px);touch-action:auto}
+.card{width:min(420px,100%);display:flex;flex-direction:column;gap:14px;background:#1c1636;border-radius:24px;padding:22px;border:1px solid #ffffff1a}
+h1{font-family:var(--display);font-weight:400;margin:0;font-size:30px;line-height:1}
+h1 .a{color:#ff5d73} h1 .b{color:#33d1c4}
+p{margin:0;color:var(--muted);line-height:1.45;font-size:15px}
+input{font:600 28px var(--display);letter-spacing:.2em;text-transform:uppercase;text-align:center;padding:12px;border-radius:14px;border:2px solid #ffffff33;background:var(--panel);color:var(--ink);width:100%}
+.cta{padding:16px;border:0;border-radius:16px;background:var(--gold);color:var(--gold-ink);font-family:var(--display);font-size:20px;width:100%}
+.ghost{padding:12px;border-radius:14px;background:transparent;border:2px solid #ffffff33;font-weight:600;font-size:15px;width:100%}
+#jmsg{min-height:1.4em;color:#ffb4a8;font-size:14px}
+
+/* controle */
+#pad{position:fixed;inset:0;display:grid;gap:8px;padding:calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 8px) calc(env(safe-area-inset-bottom) + 8px) calc(env(safe-area-inset-left) + 8px);
+  background:radial-gradient(circle at 50% 0,color-mix(in srgb,var(--me) 25%,transparent),transparent 60%),var(--bg)}
+#pad.tilt{grid-template-columns:1fr 1.25fr;grid-template-rows:.8fr 1.2fr;grid-template-areas:"brake nitro" "brake gas"}
+#pad.tilt [data-z=left],#pad.tilt [data-z=right]{display:none}
+#pad.btns{grid-template-columns:1fr 1fr 1.3fr;grid-template-rows:.8fr 1.2fr .7fr;grid-template-areas:"left right nitro" "left right gas" "left right brake"}
+.z{border-radius:22px;border:3px solid #ffffff22;background:#ffffff0d;display:grid;place-items:center;font-family:var(--display);font-size:clamp(16px,4.5vw,30px);color:#ffffffcc;transition:background .06s,transform .06s}
+.z small{display:block;font-family:var(--body);font-weight:600;font-size:12px;color:var(--muted);margin-top:4px;text-align:center}
+.z.on{background:color-mix(in srgb,var(--me) 55%,transparent);border-color:var(--me);color:#fff;transform:scale(.98)}
+[data-z=gas]{grid-area:gas;background:color-mix(in srgb,var(--me) 18%,transparent);border-color:color-mix(in srgb,var(--me) 60%,transparent)}
+[data-z=brake]{grid-area:brake}
+[data-z=nitro]{grid-area:nitro;position:relative;overflow:hidden}
+[data-z=nitro] .fill{position:absolute;left:0;bottom:0;top:0;width:0;background:linear-gradient(90deg,#ff9f1c55,#ffd16677);transition:width .15s;z-index:-1}
+[data-z=nitro]{isolation:isolate}
+[data-z=left]{grid-area:left;font-size:clamp(30px,9vw,60px)}
+[data-z=right]{grid-area:right;font-size:clamp(30px,9vw,60px)}
+
+#top{position:fixed;top:calc(env(safe-area-inset-top) + 14px);left:50%;translate:-50% 0;display:flex;gap:8px;align-items:center;z-index:5;pointer-events:none}
+.pill{background:#16122bdd;border:2px solid var(--me);border-radius:99px;padding:6px 14px;font-weight:800;font-size:15px;white-space:nowrap}
+#gear{pointer-events:auto;background:#16122bdd;border:1px solid #ffffff33;border-radius:99px;padding:6px 12px;font-size:15px}
+#wheel{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 14px);translate:-50% 0;width:64px;height:64px;pointer-events:none;z-index:4;opacity:.9}
+#pad.btns ~ #wheel{display:none}
+
+/* sobreposições */
+.over{position:fixed;inset:0;z-index:20;display:grid;place-items:center;background:#16122be8;padding:calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + 14px) calc(env(safe-area-inset-bottom) + 14px) calc(env(safe-area-inset-left) + 14px);overflow:auto;touch-action:pan-y}
+.over .card{max-height:100%;overflow:auto}
+.you{font-family:var(--display);font-size:34px;color:var(--me);line-height:1}
+.row{display:flex;gap:8px}
+.seg{flex:1;padding:10px;border-radius:12px;background:var(--panel);border:2px solid transparent;font-weight:600;font-size:14px}
+.seg[aria-pressed="true"]{border-color:var(--gold)}
+.meter{height:14px;border-radius:9px;background:#ffffff1a;position:relative}
+.meter i{position:absolute;top:-4px;bottom:-4px;width:8px;margin-left:-4px;border-radius:4px;background:var(--me);left:50%}
+.meter::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;background:#ffffff55}
+.small{font-size:13px;color:var(--muted)}
+.check{display:flex;gap:10px;align-items:center;font-weight:600;font-size:15px}
+.check input{width:22px;height:22px;accent-color:var(--gold)}
+#rotate{position:fixed;inset:0;z-index:30;background:var(--bg);display:none;place-items:center;text-align:center;padding:24px}
+#rotate div{font-size:70px;animation:rot 1.6s ease-in-out infinite}
+@keyframes rot{0%,30%{rotate:0deg}60%,100%{rotate:-90deg}}
+@media (orientation:portrait){body.playing #rotate{display:grid}}
+#status{position:fixed;left:50%;top:50%;translate:-50% -50%;z-index:25;background:#16122bf0;border:2px solid #ffb4a8;border-radius:16px;padding:14px 18px;font-weight:600;text-align:center}
+</style>
+</head>
+<body>
+
+<div id="join">
+  <div class="card">
+    <h1><span class="a">Corrida</span> a <span class="b">Dois</span></h1>
+    <p>Digite o código que aparece na TV (ou escaneie o QR code com a câmera).</p>
+    <input id="code" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD">
+    <button class="cta" id="enter">Entrar</button>
+    <div id="jmsg"></div>
+  </div>
+</div>
+
+<div id="pad" class="tilt" hidden>
+  <button class="z" data-z="brake"><span>FREIO<small>segure para dar ré</small></span></button>
+  <button class="z" data-z="left">◀</button>
+  <button class="z" data-z="right">▶</button>
+  <button class="z" data-z="nitro"><span class="fill"></span><span>NITRO<small id="ntxt">carregando…</small></span></button>
+  <button class="z" data-z="gas"><span>ACELERA<small>segure</small></span></button>
+</div>
+<svg id="wheel" viewBox="-50 -50 100 100" hidden><g id="wg"><circle r="42" fill="none" stroke="var(--me)" stroke-width="9"/><circle r="9" fill="var(--me)"/><path d="M-40 0H40M0 0V40" stroke="var(--me)" stroke-width="8" stroke-linecap="round"/><circle cy="-42" r="6" fill="#fff"/></g></svg>
+<div id="top" hidden><span class="pill" id="info">Conectado</span><button id="gear" aria-label="Ajustes">⚙︎</button></div>
+
+<div class="over" id="card" hidden>
+  <div class="card">
+    <div class="you" id="you">Coral</div>
+    <p id="cmsg">Você está na corrida!</p>
+    <button class="cta" id="ready">Estou pronto!</button>
+    <button class="cta" id="again" hidden>Revanche</button>
+    <div class="label small">Como virar</div>
+    <div class="row" id="modes">
+      <button class="seg" data-m="tilt" aria-pressed="true">Inclinar (volante)</button>
+      <button class="seg" data-m="btns" aria-pressed="false">Botões ◀ ▶</button>
+    </div>
+    <div id="tiltbox">
+      <p class="small" style="margin-bottom:8px">Segure o celular deitado e gire como um volante:</p>
+      <div class="meter"><i id="mi"></i></div>
+      <div class="row" style="margin-top:10px">
+        <button class="seg" id="center">Centralizar</button>
+        <button class="seg" id="invert" aria-pressed="false">Inverter lado</button>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="auto"> Acelerar sozinho</label>
+    <button class="ghost" id="close" hidden>Voltar ao jogo</button>
+  </div>
+</div>
+
+<div id="rotate"><div>📱</div><p style="margin-top:16px">Gire o celular <b>deitado</b> (na horizontal)</p></div>
+<div id="status" hidden></div>
+
+<script>
+'use strict';
+const $=s=>document.querySelector(s);
+const HOST_PREFIX='casalcorrida-';
+const store={get(k,d){try{const v=localStorage.getItem('cc-'+k);return v===null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('cc-'+k,JSON.stringify(v))}catch(e){}}};
+const myId=store.get('id',null)||(()=>{const v=Math.random().toString(36).slice(2,10);store.set('id',v);return v})();
+const cfg={mode:store.get('mode','tilt'),invert:store.get('invert',false),auto:store.get('auto',false),center:store.get('center',0)};
+
+let peer=null,conn=null,code=null,slot=-1,phase=null,st={},retryT=null,settingsOpen=false;
+
+/* ---------- Entrar ---------- */
+const hash=(location.hash||'').replace('#','').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);
+if(hash)$('#code').value=hash;
+$('#enter').onclick=()=>{
+  const c=$('#code').value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(c.length!==4){$('#jmsg').textContent='O código tem 4 letras/números.';return}
+  askMotion();wake();
+  code=c;$('#jmsg').textContent='Conectando…';$('#enter').disabled=true;start();
+};
+$('#code').addEventListener('keydown',e=>{if(e.key==='Enter')$('#enter').click()});
+
+function start(){
+  if(typeof Peer==='undefined'){$('#jmsg').textContent='Sem internet para conectar.';$('#enter').disabled=false;return}
+  if(!peer||peer.destroyed){
+    peer=new Peer();
+    peer.on('open',openConn);
+    peer.on('disconnected',()=>{setTimeout(()=>{if(peer&&!peer.destroyed&&peer.disconnected)try{peer.reconnect()}catch(e){}},800)});
+    peer.on('error',e=>{
+      if(e.type==='peer-unavailable'){
+        if(slot<0){$('#jmsg').textContent='Sala não encontrada. Confira o código na TV.';$('#enter').disabled=false}
+        else lost('A TV não responde. Tentando de novo…')}
+      else if(slot<0){$('#jmsg').textContent='Falha na conexão ('+e.type+'). Tente de novo.';$('#enter').disabled=false}
+      else lost('Conexão caiu. Reconectando…')});
+  }else if(peer.open)openConn();
+  else if(peer.disconnected)try{peer.reconnect()}catch(e){}
+}
+function openConn(){
+  if(conn&&conn.open)return;
+  try{if(conn)conn.close()}catch(e){}
+  const c=peer.connect(HOST_PREFIX+code,{serialization:'json',reliable:true});conn=c;
+  c.on('open',()=>{c.send({t:'join',id:myId})});
+  c.on('data',onData);
+  c.on('close',()=>{if(conn===c)lost('Conexão caiu. Reconectando…')});
+  c.on('error',()=>{});
+  setTimeout(()=>{if(conn===c&&!c.open&&slot>=0)lost('Reconectando…')},7000);
+}
+function lost(msg){
+  if(slot<0)return;
+  showStatus(msg);clearTimeout(retryT);retryT=setTimeout(start,1500);
+}
+function showStatus(m){const s=$('#status');s.textContent=m;s.hidden=!m}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){wake();if(slot>=0&&!(conn&&conn.open))start()}});
+
+function onData(d){
+  if(!d||typeof d!=='object')return;
+  if(d.t==='hi'){slot=d.slot;showStatus('');
+    document.documentElement.style.setProperty('--me',d.color);$('#you').textContent='Você é '+d.name;
+    $('#join').hidden=true;$('#pad').hidden=false;$('#top').hidden=false;document.body.classList.add('playing');applyMode();
+    try{history.replaceState(null,'','#'+code)}catch(e){}}
+  else if(d.t==='full'){$('#jmsg').textContent='A sala já tem dois jogadores.';$('#enter').disabled=false}
+  else if(d.t==='kicked'){slot=-1;location.reload()}
+  else if(d.t==='buzz'){try{navigator.vibrate&&navigator.vibrate(d.ms||40)}catch(e){}}
+  else if(d.t==='st'){st=d;render()}
+}
+function render(){
+  const ph=st.ph;
+  if(ph!==phase){phase=ph;if(ph==='count'||ph==='race'){settingsOpen=false;try{navigator.vibrate&&navigator.vibrate(30)}catch(e){}}}
+  let info='';
+  if(ph==='lobby')info=st.ready?'Pronto! Esperando…':'Na sala';
+  else if(ph==='count')info='Prepare-se!';
+  else if(ph==='race'||ph==='done')info=(st.fin?'Chegou! ':'')+(st.pos?st.pos+'º · ':'')+'Volta '+st.lap+'/'+st.laps;
+  else if(ph==='results')info=st.pos===1&&st.multi?'🏆 Você venceu!':'Fim da corrida';
+  $('#info').textContent=info;
+  const n=st.n||0;$('[data-z=nitro] .fill').style.width=(n*100)+'%';$('#ntxt').textContent=n>.05?Math.round(n*100)+'%':'vazio';
+  const showCard=settingsOpen||ph==='lobby'||ph==='results';
+  $('#card').hidden=!showCard;
+  $('#ready').hidden=!(ph==='lobby')||settingsOpen;$('#ready').disabled=!!st.ready;$('#ready').textContent=st.ready?'Esperando o outro…':'Estou pronto!';
+  $('#again').hidden=!(ph==='results')||settingsOpen;
+  $('#close').hidden=!settingsOpen;
+  if(ph==='lobby')$('#cmsg').textContent=`Pista: ${st.track} · ${st.laps} voltas. Olhe para a TV!`;
+  else if(ph==='results')$('#cmsg').textContent=(st.multi?(st.pos===1?'Você venceu! 🏆 ':'Ficou em '+st.pos+'º. ')+`Placar: Coral ${st.wins[0]} × ${st.wins[1]} Menta`:'Boa corrida!');
+  else $('#cmsg').textContent='Corrida em andamento.';
+}
+$('#ready').onclick=()=>{askMotion();wake();send({t:'ready'})};
+$('#again').onclick=()=>send({t:'again'});
+$('#gear').onclick=()=>{settingsOpen=true;render()};
+$('#close').onclick=()=>{settingsOpen=false;render()};
+function send(m){try{if(conn&&conn.open)conn.send(m)}catch(e){}}
+
+/* ---------- Toques (multitoque) ---------- */
+const touches=new Map();
+function zoneAt(x,y){const el=document.elementFromPoint(x,y);const z=el&&el.closest&&el.closest('[data-z]');return z?z.dataset.z:null}
+function pressed(z){for(const v of touches.values())if(v===z)return true;return false}
+function paint(){document.querySelectorAll('[data-z]').forEach(el=>el.classList.toggle('on',pressed(el.dataset.z)))}
+const pad=$('#pad');
+pad.addEventListener('pointerdown',e=>{e.preventDefault();try{pad.setPointerCapture(e.pointerId)}catch(_){}touches.set(e.pointerId,zoneAt(e.clientX,e.clientY));paint();
+  if(touches.get(e.pointerId)==='nitro')try{navigator.vibrate&&navigator.vibrate(15)}catch(_){}});
+pad.addEventListener('pointermove',e=>{if(!touches.has(e.pointerId))return;const z=zoneAt(e.clientX,e.clientY);if(z!==touches.get(e.pointerId)){touches.set(e.pointerId,z);paint()}});
+const up=e=>{touches.delete(e.pointerId);paint()};
+pad.addEventListener('pointerup',up);pad.addEventListener('pointercancel',up);
+document.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('gesturestart',e=>e.preventDefault());
+
+/* ---------- Inclinação ---------- */
+let gSign=1,raw=0,motionOK=false;
+function askMotion(){
+  try{if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
+    DeviceMotionEvent.requestPermission().then(r=>{if(r!=='granted'){cfg.mode='btns';applyMode()}}).catch(()=>{})}}catch(e){}
+}
+addEventListener('devicemotion',e=>{const a=e.accelerationIncludingGravity;if(!a||a.x==null)return;
+  const g=Math.hypot(a.x,a.y,a.z)||9.8;if(Math.abs(a.x)>3)gSign=Math.sign(a.x);
+  const v=gSign*a.y/g;raw+=(v-raw)*.5;motionOK=true});
+function tiltSteer(){let v=(raw-cfg.center)/0.42;if(cfg.invert)v=-v;if(Math.abs(v)<.06)v=0;else v=(v-Math.sign(v)*.06)/.94;return Math.max(-1,Math.min(1,v))}
+$('#center').onclick=()=>{cfg.center=raw;store.set('center',raw)};
+$('#invert').onclick=()=>{cfg.invert=!cfg.invert;store.set('invert',cfg.invert);$('#invert').setAttribute('aria-pressed',cfg.invert)};
+$('#invert').setAttribute('aria-pressed',cfg.invert);
+$('#auto').checked=cfg.auto;$('#auto').onchange=e=>{cfg.auto=e.target.checked;store.set('auto',cfg.auto)};
+$('#modes').onclick=e=>{const b=e.target.closest('.seg');if(!b)return;cfg.mode=b.dataset.m;store.set('mode',cfg.mode);if(cfg.mode==='tilt')askMotion();applyMode()};
+function applyMode(){pad.className=cfg.mode;$('#tiltbox').hidden=cfg.mode!=='tilt';$('#wheel').toggleAttribute('hidden',cfg.mode!=='tilt'||$('#pad').hidden);
+  document.querySelectorAll('#modes .seg').forEach(b=>b.setAttribute('aria-pressed',b.dataset.m===cfg.mode))}
+applyMode();
+
+/* ---------- Envio ---------- */
+let lastSent='',lastAt=0;
+setInterval(()=>{
+  let s;
+  if(cfg.mode==='tilt')s=tiltSteer();else s=(pressed('right')?1:0)-(pressed('left')?1:0);
+  const b=pressed('brake'),n=pressed('nitro');
+  const g=pressed('gas')||n||(cfg.auto&&!b);
+  $('#mi').style.left=(50+tiltSteer()*50)+'%';
+  $('#wg').setAttribute('transform','rotate('+(s*90).toFixed(1)+')');
+  const m={t:'in',s:Math.round(s*100)/100,g:g?1:0,b:b?1:0,n:n?1:0};const k=JSON.stringify(m),now=performance.now();
+  if(k!==lastSent||now-lastAt>200){send(m);lastSent=k;lastAt=now}
+},33);
+
+/* ---------- Tela acesa ---------- */
+let lock=null;
+function wake(){try{if('wakeLock' in navigator&&!lock)navigator.wakeLock.request('screen').then(l=>{lock=l;l.addEventListener('release',()=>{lock=null})}).catch(()=>{})}catch(e){}}
+</script>
+</body>
+</html>

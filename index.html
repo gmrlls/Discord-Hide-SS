@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jogos a Dois</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap">
+<style>
+:root{--bg:#16122b;--ink:#f6f1ff;--muted:#a59cc4;--panel:#231c40;--p1:#ff5d73;--p2:#33d1c4;--gold:#ffd166;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:"Rubik",system-ui,sans-serif;display:grid;place-items:center;padding:24px 16px}
+main{width:min(720px,100%);display:grid;gap:18px}
+h1{font-family:"Bungee",Impact,sans-serif;font-weight:400;font-size:clamp(36px,8vw,60px);margin:0;line-height:.95}
+h1 .a{color:var(--p1)} h1 .b{color:var(--p2)}
+p{margin:0;color:var(--muted);line-height:1.5}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+a.card{display:flex;flex-direction:column;gap:8px;background:var(--panel);border-radius:20px;padding:20px;text-decoration:none;color:var(--ink);border:2px solid transparent}
+a.card:hover,a.card:focus-visible{border-color:var(--gold);outline:none}
+a.card b{font-family:"Bungee",Impact,sans-serif;font-weight:400;font-size:22px}
+a.card .tag{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);font-weight:600}
+a.card.small{padding:14px 20px}
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="a">Jogos</span> a <span class="b">Dois</span></h1>
+  <div class="grid">
+    <a class="card" href="corrida/tv.html"><span class="tag">TV ou PC + 2 celulares</span><b>Corrida a Dois</b><p>Abra na TV/PC. Cada um escaneia o QR code e o celular vira volante.</p></a>
+    <a class="card" href="duelo.html"><span class="tag">Um celular, dois jogadores</span><b>Duelo a Dois</b><p>Minijogos de reflexo, cabo de guerra, batata quente e mais.</p></a>
+  </div>
+  <a class="card small" href="corrida/controle.html"><p>Já tem o código da corrida? <b style="font-size:16px">Entrar como controle →</b></p></a>
+</main>
+</body>
+</html>
