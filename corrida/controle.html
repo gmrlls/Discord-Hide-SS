@@ -11,6 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
 [hidden]{display:none!important}
 :root{--bg:#16122b;--ink:#f6f1ff;--muted:#a59cc4;--panel:#231c40;--me:#ffd166;--gold:#ffd166;--gold-ink:#2a1d00;
@@ -117,6 +118,7 @@ input{font:600 28px var(--display);letter-spacing:.2em;text-transform:uppercase;
       </div>
     </div>
     <label class="check"><input type="checkbox" id="auto"> Acelerar sozinho</label>
+    <p class="small" id="net"></p>
     <button class="ghost" id="close" hidden>Voltar ao jogo</button>
   </div>
 </div>
@@ -132,7 +134,31 @@ const store={get(k,d){try{const v=localStorage.getItem('cc-'+k);return v===null?
 const myId=store.get('id',null)||(()=>{const v=Math.random().toString(36).slice(2,10);store.set('id',v);return v})();
 const cfg={mode:store.get('mode','tilt'),invert:store.get('invert',false),auto:store.get('auto',false),center:store.get('center',0)};
 
-let peer=null,conn=null,code=null,slot=-1,phase=null,st={},retryT=null,settingsOpen=false;
+let peer=null,conn=null,code=null,slot=-1,phase=null,st={},settingsOpen=false,RL=null,lastRx=0,joinT=null,rtcTry=0;
+
+/* ---------- Rede ----------
+   Dois caminhos: ligação direta com a TV (WebRTC/PeerJS) e reserva via servidor MQTT público.
+   O que funcionar primeiro é usado; a ligação direta tem preferência quando abre. */
+const RELAYS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt'];
+const TOPIC='casalcorrida-v1/';
+const SESSION=Math.random().toString(36).slice(2,10);
+function relay(sub,onMsg,onUp){
+  const cs=[],seen={};let q=0;
+  if(typeof mqtt!=='undefined')for(const url of RELAYS){try{
+    const c=mqtt.connect(url,{clientId:'cc'+Math.random().toString(16).slice(2,12),keepalive:20,reconnectPeriod:2000,connectTimeout:8000,clean:true});
+    c.on('connect',()=>{c.subscribe(sub,{qos:0},()=>{onUp&&onUp()})});
+    c.on('message',(t,buf)=>{let d;try{d=JSON.parse(buf.toString())}catch(e){return}
+      if(!d||!d.s||d.q<=(seen[d.s]||0))return;seen[d.s]=d.q;onMsg(d)});
+    c.on('error',()=>{});cs.push(c)}catch(e){}}
+  return{send(topic,o){const m=JSON.stringify(Object.assign({},o,{s:SESSION,q:++q}));cs.forEach(c=>{if(c.connected)c.publish(topic,m,{qos:0})})},
+    up(){return cs.some(c=>c.connected)},end(){cs.forEach(c=>{try{c.end(true)}catch(e){}})}}
+}
+function direct(){return!!(conn&&conn.open)}
+function send(m){
+  if(direct()){try{conn.send(m);return}catch(e){}}
+  if(RL&&code)RL.send(TOPIC+code+'/up',{f:myId,m});
+}
+function sendJoin(){const m={t:'join',id:myId};if(direct())try{conn.send(m)}catch(e){}if(RL&&code)RL.send(TOPIC+code+'/up',{f:myId,m})}
 
 /* ---------- Entrar ---------- */
 const hash=(location.hash||'').replace('#','').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);
@@ -141,45 +167,54 @@ $('#enter').onclick=()=>{
   const c=$('#code').value.toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(c.length!==4){$('#jmsg').textContent='O código tem 4 letras/números.';return}
   askMotion();wake();
+  if(code&&code!==c){if(RL){RL.end();RL=null}try{conn&&conn.close()}catch(e){}conn=null}
   code=c;$('#jmsg').textContent='Conectando…';$('#enter').disabled=true;start();
+  clearTimeout(joinT);joinT=setTimeout(()=>{if(slot<0){$('#jmsg').textContent='Ainda não conectou. Confira se o código é igual ao da TV e se a página da TV está aberta. Continuo tentando…';$('#enter').disabled=false}},12000);
 };
 $('#code').addEventListener('keydown',e=>{if(e.key==='Enter')$('#enter').click()});
 
 function start(){
-  if(typeof Peer==='undefined'){$('#jmsg').textContent='Sem internet para conectar.';$('#enter').disabled=false;return}
+  if(typeof Peer==='undefined'&&typeof mqtt==='undefined'){$('#jmsg').textContent='Sem internet para conectar.';$('#enter').disabled=false;return}
+  if(!RL&&typeof mqtt!=='undefined')RL=relay(TOPIC+code+'/dn/'+myId,d=>{if(d.m)onData(d.m)},sendJoin);
+  sendJoin();
+  startPeer();
+}
+function startPeer(){
+  if(typeof Peer==='undefined'||direct())return;
+  rtcTry=performance.now();
   if(!peer||peer.destroyed){
     peer=new Peer();
     peer.on('open',openConn);
-    peer.on('disconnected',()=>{setTimeout(()=>{if(peer&&!peer.destroyed&&peer.disconnected)try{peer.reconnect()}catch(e){}},800)});
-    peer.on('error',e=>{
-      if(e.type==='peer-unavailable'){
-        if(slot<0){$('#jmsg').textContent='Sala não encontrada. Confira o código na TV.';$('#enter').disabled=false}
-        else lost('A TV não responde. Tentando de novo…')}
-      else if(slot<0){$('#jmsg').textContent='Falha na conexão ('+e.type+'). Tente de novo.';$('#enter').disabled=false}
-      else lost('Conexão caiu. Reconectando…')});
+    peer.on('disconnected',()=>{setTimeout(()=>{if(peer&&!peer.destroyed&&peer.disconnected)try{peer.reconnect()}catch(e){}},1000)});
+    peer.on('error',()=>{});
   }else if(peer.open)openConn();
   else if(peer.disconnected)try{peer.reconnect()}catch(e){}
 }
 function openConn(){
-  if(conn&&conn.open)return;
+  if(direct())return;
   try{if(conn)conn.close()}catch(e){}
   const c=peer.connect(HOST_PREFIX+code,{serialization:'json',reliable:true});conn=c;
-  c.on('open',()=>{c.send({t:'join',id:myId})});
+  c.on('open',()=>{try{c.send({t:'join',id:myId})}catch(e){}});
   c.on('data',onData);
-  c.on('close',()=>{if(conn===c)lost('Conexão caiu. Reconectando…')});
+  c.on('close',()=>{if(conn===c)conn=null});
   c.on('error',()=>{});
-  setTimeout(()=>{if(conn===c&&!c.open&&slot>=0)lost('Reconectando…')},7000);
 }
-function lost(msg){
-  if(slot<0)return;
-  showStatus(msg);clearTimeout(retryT);retryT=setTimeout(start,1500);
-}
-function showStatus(m){const s=$('#status');s.textContent=m;s.hidden=!m}
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){wake();if(slot>=0&&!(conn&&conn.open))start()}});
+function showStatus(m){const s=$('#status');if(s.textContent!==m)s.textContent=m;s.hidden=!m}
+// vigia: reenvia "join" até a TV responder, tenta de novo a ligação direta e avisa se tudo cair
+setInterval(()=>{
+  if(!code)return;const now=performance.now();
+  if(slot<0){sendJoin();if(now-rtcTry>6000)startPeer();return}
+  showStatus(now-lastRx>3000?'Reconectando com a TV…':'');
+  if(!direct()&&now-rtcTry>8000)startPeer();
+  const n=$('#net');if(n)n.textContent=direct()?'Conexão: direta com a TV (mais rápida)':(RL&&RL.up()?'Conexão: pela internet':'Conexão: reconectando…');
+},1500);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){wake();if(code){sendJoin();startPeer()}}});
 
 function onData(d){
   if(!d||typeof d!=='object')return;
-  if(d.t==='hi'){slot=d.slot;showStatus('');
+  lastRx=performance.now();
+  if(d.t==='who'){sendJoin();return}
+  if(d.t==='hi'){if(slot===d.slot&&!$('#pad').hidden)return;slot=d.slot;showStatus('');clearTimeout(joinT);
     document.documentElement.style.setProperty('--me',d.color);$('#you').textContent='Você é '+d.name;
     $('#join').hidden=true;$('#pad').hidden=false;$('#top').hidden=false;document.body.classList.add('playing');applyMode();
     try{history.replaceState(null,'','#'+code)}catch(e){}}
@@ -211,7 +246,6 @@ $('#ready').onclick=()=>{askMotion();wake();send({t:'ready'})};
 $('#again').onclick=()=>send({t:'again'});
 $('#gear').onclick=()=>{settingsOpen=true;render()};
 $('#close').onclick=()=>{settingsOpen=false;render()};
-function send(m){try{if(conn&&conn.open)conn.send(m)}catch(e){}}
 
 /* ---------- Toques (multitoque) ---------- */
 const touches=new Map();
@@ -256,7 +290,7 @@ setInterval(()=>{
   $('#mi').style.left=(50+tiltSteer()*50)+'%';
   $('#wg').setAttribute('transform','rotate('+(s*90).toFixed(1)+')');
   const m={t:'in',s:Math.round(s*100)/100,g:g?1:0,b:b?1:0,n:n?1:0};const k=JSON.stringify(m),now=performance.now();
-  if(k!==lastSent||now-lastAt>200){send(m);lastSent=k;lastAt=now}
+  if(slot>=0&&(k!==lastSent||now-lastAt>200)){send(m);lastSent=k;lastAt=now}
 },33);
 
 /* ---------- Tela acesa ---------- */

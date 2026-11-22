@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;600;800&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 [hidden]{display:none!important}
@@ -239,7 +240,7 @@ const TRACKS=TRACK_DEFS.map((d,i)=>buildTrack(d,1234+i*77));
 
 /* ---------- Estado ---------- */
 const S={phase:'lobby',track:0,laps:3,cars:[],t:0,goAt:0,firstFinish:null,wins:[0,0],code:null,muted:false};
-const slots=[0,1].map(i=>({i,kind:null,id:null,conn:null,ready:false,online:false,inp:{s:0,g:0,b:0,n:0},lastIn:0}));
+const slots=[0,1].map(i=>({i,kind:null,id:null,rtc:null,ready:false,seen:0,inp:{s:0,g:0,b:0,n:0},lastIn:0}));
 let skid=document.createElement('canvas');skid.width=W;skid.height=H;let sk=skid.getContext('2d');
 const parts=[];
 
@@ -351,7 +352,7 @@ function fmt(t){if(t==null)return'—';const m=Math.floor(t/60),s=t-m*60;return 
 function hud(){
   const pos=positions();
   for(const i of [0,1]){const el=$('#h'+i),c=S.cars.find(c=>c.slot===i);el.hidden=!c;if(!c)continue;
-    el.classList.toggle('off',slots[i].kind==='phone'&&!slots[i].online);
+    el.classList.toggle('off',!isOn(slots[i]));
     el.querySelector('.pos').textContent=S.cars.length>1?(pos.indexOf(c)+1)+'º':'';
     el.querySelector('.lap').textContent=c.finished?'Chegou!':`Volta ${Math.min(S.laps,Math.max(1,c.lapsDone+1))}/${S.laps}`;
     const last=c.laps.length?c.laps[c.laps.length-1]:null;
@@ -412,7 +413,7 @@ function kbInput(i){const k=KB[i];const tgt=(keys.has(k.r)?1:0)-(keys.has(k.l)?1
 addEventListener('keydown',e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
   keys.add(e.code);audioOn();
-  if(S.phase==='lobby'){for(const i of [0,1])if(Object.values(KB[i]).includes(e.code)&&!slots[i].kind&&e.code!=='Enter'){slots[i].kind='kb';slots[i].online=true;gridCars();lobbyUI()}}
+  if(S.phase==='lobby'){for(const i of [0,1])if(Object.values(KB[i]).includes(e.code)&&!slots[i].kind&&e.code!=='Enter'){slots[i].kind='kb';gridCars();lobbyUI()}}
   if(e.code==='Escape'&&S.phase!=='lobby')toLobby();
 });
 addEventListener('keyup',e=>keys.delete(e.code));
@@ -432,39 +433,66 @@ $('#mute').onclick=()=>{audioOn();S.muted=!S.muted;if(master)master.gain.value=S
 $('#fs').onclick=()=>{try{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}catch(e){}};
 $('#menu').onclick=toLobby;
 
-/* ---------- Rede (PeerJS) ---------- */
-let peer=null;
+/* ---------- Rede ----------
+   Dois caminhos ao mesmo tempo: ligação direta (WebRTC/PeerJS, mais rápida) e reserva via
+   servidor MQTT público (funciona em qualquer rede, inclusive 4G e Wi-Fi que isola aparelhos). */
+const RELAYS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt'];
+const TOPIC='casalcorrida-v1/';
+const SESSION=Math.random().toString(36).slice(2,10);
+function relay(sub,onMsg){
+  const cs=[],seen={};let q=0;
+  if(typeof mqtt!=='undefined')for(const url of RELAYS){try{
+    const c=mqtt.connect(url,{clientId:'cc'+Math.random().toString(16).slice(2,12),keepalive:20,reconnectPeriod:2000,connectTimeout:8000,clean:true});
+    c.on('connect',()=>c.subscribe(sub,{qos:0}));
+    c.on('message',(t,buf)=>{let d;try{d=JSON.parse(buf.toString())}catch(e){return}
+      if(!d||!d.s||d.q<=(seen[d.s]||0))return;seen[d.s]=d.q;onMsg(d)});
+    c.on('error',()=>{});cs.push(c)}catch(e){}}
+  return{send(topic,o){const m=JSON.stringify(Object.assign({},o,{s:SESSION,q:++q}));cs.forEach(c=>{if(c.connected)c.publish(topic,m,{qos:0})})},
+    up(){return cs.some(c=>c.connected)},end(){cs.forEach(c=>{try{c.end(true)}catch(e){}})}}
+}
+let peer=null,RL=null;
 function makeCode(){const A='ABCDEFGHJKMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<4;i++)s+=A[Math.floor(Math.random()*A.length)];return s}
 function controllerURL(code){return new URL('controle.html#'+code,location.href).href}
+function showJoin(code){const url=controllerURL(code);$('#code').textContent=code;$('#link').textContent=url;
+  $('#qr').innerHTML='';try{new QRCode($('#qr'),{text:url,width:180,height:180,correctLevel:QRCode.CorrectLevel.M})}catch(e){$('#qr').textContent='Use o link ao lado'}
+  $('#netmsg').textContent=location.protocol==='file:'?'Abra esta página por um endereço https (ex.: GitHub Pages) para o celular conseguir entrar.':''}
 function openRoom(){
-  if(typeof Peer==='undefined'){$('#qr').textContent='Sem internet';$('#netmsg').textContent='Não consegui carregar a conexão. Dá pra jogar no teclado.';return}
-  const code=makeCode();S.code=code;
-  peer=new Peer(HOST_PREFIX+code);
-  peer.on('open',()=>{const url=controllerURL(code);$('#code').textContent=code;$('#link').textContent=url;$('#netmsg').textContent='';
-    $('#qr').innerHTML='';try{new QRCode($('#qr'),{text:url,width:180,height:180,correctLevel:QRCode.CorrectLevel.M})}catch(e){$('#qr').textContent='Use o link ao lado'}
-    if(location.protocol==='file:')$('#netmsg').textContent='Abra esta página por um endereço https (ex.: GitHub Pages) para o celular conseguir entrar.'});
-  peer.on('error',e=>{if(e.type==='unavailable-id'){peer.destroy();openRoom();return}
-    if(['network','server-error','socket-error','socket-closed'].includes(e.type)){$('#netmsg').textContent='Conexão instável, tentando de novo…';setTimeout(()=>{if(peer&&peer.disconnected&&!peer.destroyed)peer.reconnect()},2000)}});
-  peer.on('disconnected',()=>{setTimeout(()=>{if(peer&&!peer.destroyed&&peer.disconnected)peer.reconnect()},1000)});
-  peer.on('connection',conn=>{
-    conn.on('data',d=>onMsg(conn,d));
-    conn.on('close',()=>{const s=slots.find(s=>s.conn===conn);if(s){s.online=false;s.conn=null;lobbyUI()}});
+  if(typeof Peer==='undefined'&&typeof mqtt==='undefined'){$('#qr').textContent='Sem internet';$('#netmsg').textContent='Não consegui carregar a conexão. Dá pra jogar no teclado.';return}
+  const code=makeCode();S.code=code;showJoin(code);
+  if(RL)RL.end();RL=relay(TOPIC+code+'/up',d=>{if(d.f&&d.m)onMsg({mq:String(d.f)},d.m)});
+  if(peer){try{peer.destroy()}catch(e){}peer=null}
+  if(typeof Peer==='undefined')return;
+  const p=new Peer(HOST_PREFIX+code);peer=p;
+  p.on('error',e=>{if(e.type==='unavailable-id'&&peer===p){openRoom();return}
+    if(['network','server-error','socket-error','socket-closed'].includes(e.type))setTimeout(()=>{if(peer===p&&p.disconnected&&!p.destroyed)try{p.reconnect()}catch(_){}},2000)});
+  p.on('disconnected',()=>{setTimeout(()=>{if(peer===p&&!p.destroyed&&p.disconnected)try{p.reconnect()}catch(_){}},1000)});
+  p.on('connection',conn=>{
+    conn.on('data',d=>onMsg({rtc:conn},d));
+    conn.on('close',()=>{const s=slots.find(s=>s.rtc===conn);if(s){s.rtc=null;lobbyUI()}});
     conn.on('error',()=>{});
   });
 }
-function send(s,m){try{if(s.conn&&s.conn.open)s.conn.send(m)}catch(e){}}
-function onMsg(conn,d){
+function viaMQ(id,m){if(RL&&S.code)RL.send(TOPIC+S.code+'/dn/'+id,{f:'tv',m})}
+function reply(via,m){if(via.rtc){try{via.rtc.send(m)}catch(e){}}else viaMQ(via.mq,m)}
+function direct(s){return!!(s.rtc&&s.rtc.open)}
+function isOn(s){return s.kind==='kb'||direct(s)||performance.now()-s.seen<3000}
+function send(s,m){if(direct(s)){try{s.rtc.send(m);return}catch(e){}}if(s.kind==='phone'&&s.id)viaMQ(s.id,m)}
+function onMsg(via,d){
   if(!d||typeof d!=='object')return;
   if(d.t==='join'){
-    let s=slots.find(s=>s.kind==='phone'&&s.id===d.id)||slots.find(s=>!s.kind);
-    if(!s){try{conn.send({t:'full'})}catch(e){}setTimeout(()=>conn.close(),500);return}
-    if(s.conn&&s.conn!==conn){try{s.conn.close()}catch(e){}}
-    s.kind='phone';s.id=d.id;s.conn=conn;s.online=true;s.lastIn=0;
-    send(s,{t:'hi',slot:s.i,name:PL[s.i].name,color:PL[s.i].c});
-    if(S.phase==='lobby')gridCars();lobbyUI();sendState(s);return}
-  const s=slots.find(s=>s.conn===conn);if(!s)return;
+    const id=String(d.id||'');if(!id)return;
+    const s=slots.find(s=>s.kind==='phone'&&s.id===id)||slots.find(s=>!s.kind);
+    if(!s){reply(via,{t:'full'});return}
+    const isNew=s.kind!=='phone';
+    if(via.rtc){if(s.rtc&&s.rtc!==via.rtc){try{s.rtc.close()}catch(e){}}s.rtc=via.rtc}
+    s.kind='phone';s.id=id;s.seen=performance.now();if(isNew)s.lastIn=0;
+    reply(via,{t:'hi',slot:s.i,name:PL[s.i].name,color:PL[s.i].c});
+    if(S.phase==='lobby'&&isNew)gridCars();lobbyUI();sendState(s);return}
+  const s=via.rtc?slots.find(s=>s.rtc===via.rtc):slots.find(s=>s.kind==='phone'&&s.id===via.mq);
+  if(!s){if(via.mq)reply(via,{t:'who'});return}
+  s.seen=performance.now();
   if(d.t==='in'){s.inp={s:Math.max(-1,Math.min(1,+d.s||0)),g:!!d.g,b:!!d.b,n:!!d.n};s.lastIn=performance.now()}
-  else if(d.t==='ready'){if(S.phase==='lobby'){s.ready=true;lobbyUI();checkReady()}}
+  else if(d.t==='ready'){if(S.phase==='lobby'&&!s.ready){s.ready=true;lobbyUI();checkReady()}}
   else if(d.t==='again'){if(S.phase==='results')startRace()}
   else if(d.t==='lobby'){if(S.phase==='results')toLobby()}
 }
@@ -476,6 +504,7 @@ function sendState(s){
     track:T().name,wins:S.wins,multi:S.cars.length>1})}
 function sendAll(){slots.forEach(s=>{if(s.kind==='phone')sendState(s)})}
 setInterval(sendAll,150);
+setInterval(()=>{if(S.phase==='lobby')lobbyUI()},700);
 const buzzAt=[0,0];
 function buzz(i,ms){const s=slots[i];if(!s||s.kind!=='phone')return;const n=performance.now();if(n-buzzAt[i]<250)return;buzzAt[i]=n;send(s,{t:'buzz',ms})}
 
@@ -485,11 +514,11 @@ function lobbyUI(){
     const st=el.querySelector('.st'),sub=el.querySelector('.sub');
     if(!s.kind){st.textContent='Esperando…';sub.textContent='Escaneie o QR code'}
     else if(s.kind==='kb'){st.textContent='⌨️ Teclado';sub.textContent=s.i?'Setas + Enter':'WASD + Espaço'}
-    else{st.textContent=s.online?(s.ready?'✅ Pronto!':'📱 Conectado'):'⚠️ Reconectando…';sub.textContent=s.ready?'Esperando o outro':'Toque em Pronto no celular'}});
+    else{st.textContent=isOn(s)?(s.ready?'✅ Pronto!':'📱 Conectado'):'⚠️ Reconectando…';sub.textContent=(s.ready?'Esperando o outro':'Toque em Pronto no celular')+(isOn(s)?(direct(s)?' · ligação direta':' · via internet'):'')}});
   $('#go').disabled=!slots.some(s=>s.kind);
 }
-document.querySelectorAll('.kick').forEach((b,i)=>b.onclick=()=>{const s=slots[i];if(s.conn){send(s,{t:'kicked'});const c=s.conn;setTimeout(()=>{try{c.close()}catch(e){}},300)}
-  Object.assign(s,{kind:null,id:null,conn:null,ready:false,online:false});gridCars();lobbyUI()});
+document.querySelectorAll('.kick').forEach((b,i)=>b.onclick=()=>{const s=slots[i];if(s.kind==='phone'){send(s,{t:'kicked'});const c=s.rtc;if(c)setTimeout(()=>{try{c.close()}catch(e){}},300)}
+  Object.assign(s,{kind:null,id:null,rtc:null,ready:false,seen:0});gridCars();lobbyUI()});
 TRACKS.forEach((tr,i)=>{const b=document.createElement('button');b.className='opt';b.setAttribute('aria-pressed',i===S.track);
   const c=document.createElement('canvas');c.width=320;c.height=180;c.getContext('2d').drawImage(tr.bg,0,0,320,180);b.append(c,tr.name);
   b.onclick=()=>{S.track=i;document.querySelectorAll('#tracks .opt').forEach((x,k)=>x.setAttribute('aria-pressed',k===i));gridCars()};$('#tracks').appendChild(b)});
